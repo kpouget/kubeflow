@@ -59,8 +59,8 @@ func main() {
 	var probeAddr string
 	var Burst int
 	var QPS int
-	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "probe-addr", ":8081", "The address the health endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-addr", ":8085", "The address the metric endpoint binds to.")
+	flag.StringVar(&probeAddr, "probe-addr", ":8086", "The address the health endpoint binds to.")
 	flag.StringVar(&leaderElectionNamespace, "leader-election-namespace", "",
 		"Determines the namespace in which the leader election configmap will be created.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
