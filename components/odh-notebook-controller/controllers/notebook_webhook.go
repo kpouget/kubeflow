@@ -226,22 +226,29 @@ func InjectOAuthProxy(notebook *nbv1.Notebook, oauth OAuthConfig) error {
 // Handle transforms the Notebook objects.
 func (w *NotebookWebhook) Handle(ctx context.Context, req admission.Request) admission.Response {
 	notebook := &nbv1.Notebook{}
-
+	fmt.Printf("RUNNING NotebookWebhook.Handle\n")
+	fmt.Printf("-------------v-------------------\n")
 	err := w.decoder.Decode(req, notebook)
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
-
+	fmt.Printf("RUNNING NotebookWebhook.Handle Processing %s|%s\n", notebook.Name, notebook.Namespace)
 	// Inject the the reconciliation lock only on new notebook creation
 	if req.Operation == admissionv1.Create {
+		fmt.Printf("RUNNING NotebookWebhook.Handle ==> Create operation\n")
+
+		fmt.Printf("RUNNING NotebookWebhook.Handle InjectReconciliationLock\n")
 		err = InjectReconciliationLock(&notebook.ObjectMeta)
 		if err != nil {
 			return admission.Errored(http.StatusInternalServerError, err)
 		}
+	} else {
+		fmt.Printf("RUNNING NotebookWebhook.Handle ==> %s\n", req.Operation)
 	}
 
 	// Inject the OAuth proxy if the annotation is present
 	if OAuthInjectionIsEnabled(notebook.ObjectMeta) {
+		fmt.Printf("RUNNING NotebookWebhook.Handle InjectOAuthProxy\n")
 		err = InjectOAuthProxy(notebook, w.OAuthConfig)
 		if err != nil {
 			return admission.Errored(http.StatusInternalServerError, err)
@@ -250,6 +257,8 @@ func (w *NotebookWebhook) Handle(ctx context.Context, req admission.Request) adm
 
 	// If cluster-wide-proxy is enabled add environment variables
 	if w.ClusterWideProxyIsEnabled() {
+		fmt.Printf("RUNNING NotebookWebhook.Handle InjectProxyConfig\n")
+
 		err = InjectProxyConfig(notebook)
 		if err != nil {
 			return admission.Errored(http.StatusInternalServerError, err)
@@ -262,7 +271,11 @@ func (w *NotebookWebhook) Handle(ctx context.Context, req admission.Request) adm
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledNotebook)
+	ret := admission.PatchResponseFromRaw(req.Object.Raw, marshaledNotebook)
+	fmt.Printf("RUNNING NotebookWebhook.Handle ==> Done\n")
+	fmt.Printf("%s\n", ret)
+	fmt.Printf("--------------^------------------------\n")
+	return ret
 }
 
 func (w *NotebookWebhook) ClusterWideProxyIsEnabled() bool {

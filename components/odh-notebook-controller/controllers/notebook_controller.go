@@ -21,7 +21,7 @@ import (
 	"reflect"
 	"strconv"
 	"time"
-
+	"fmt"
 	"github.com/go-logr/logr"
 	nbv1 "github.com/kubeflow/kubeflow/components/notebook-controller/api/v1"
 	"github.com/kubeflow/kubeflow/components/notebook-controller/pkg/culler"
@@ -69,12 +69,12 @@ func CompareNotebooks(nb1 nbv1.Notebook, nb2 nbv1.Notebook) bool {
 // OAuthInjectionIsEnabled returns true if the oauth sidecar injection
 // annotation is present in the notebook.
 func OAuthInjectionIsEnabled(meta metav1.ObjectMeta) bool {
-	if meta.Annotations[AnnotationInjectOAuth] != "" {
-		result, _ := strconv.ParseBool(meta.Annotations[AnnotationInjectOAuth])
-		return result
-	} else {
+	if meta.Annotations[AnnotationInjectOAuth] == "" {
 		return false
 	}
+
+	result, _ := strconv.ParseBool(meta.Annotations[AnnotationInjectOAuth])
+	return result
 }
 
 // ReconciliationLockIsEnabled returns true if the reconciliation lock
@@ -116,7 +116,10 @@ func (r *OpenshiftNotebookReconciler) RemoveReconciliationLock(notebook *nbv1.No
 	// Remove the reconciliation lock annotation
 	patch := client.RawPatch(types.MergePatchType,
 		[]byte(`{"metadata":{"annotations":{"`+culler.STOP_ANNOTATION+`":null}}}`))
-	return r.Patch(ctx, notebook, patch)
+	fmt.Printf("RUNNING RemoveReconciliationLock PATCH(%s|%s) to remove %s [%s]\n", notebook.Name, notebook.Namespace, culler.STOP_ANNOTATION, notebook.ObjectMeta.ResourceVersion)
+	ret := r.Patch(ctx, notebook, patch)
+	fmt.Printf("RUNNING RemoveReconciliationLock PATCH(%s|%s) --> done (%s)\n", notebook.Name, notebook.Namespace, ret)
+	return ret
 }
 
 // Reconcile performs the reconciling of the Openshift objects for a Kubeflow
@@ -124,17 +127,25 @@ func (r *OpenshiftNotebookReconciler) RemoveReconciliationLock(notebook *nbv1.No
 func (r *OpenshiftNotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Initialize logger format
 	log := r.Log.WithValues("notebook", req.Name, "namespace", req.Namespace)
-
+	fmt.Printf("\n======================================================\n")
+	fmt.Printf("RUNNING OpenshiftNotebookReconciler.Reconcile %s|%s || %o\n", req.Name, req.Namespace)
+	fmt.Printf("-------\n")
 	// Get the notebook object when a reconciliation event is triggered (create,
 	// update, delete)
 	notebook := &nbv1.Notebook{}
 	err := r.Get(ctx, req.NamespacedName, notebook)
 	if err != nil && apierrs.IsNotFound(err) {
-		log.Info("Stop Notebook reconciliation")
+		log.Info("Notebook not found, Stop reconciliation")
 		return ctrl.Result{}, nil
 	} else if err != nil {
 		log.Error(err, "Unable to fetch the Notebook")
 		return ctrl.Result{}, err
+	}
+
+	if ReconciliationLockIsEnabled(notebook.ObjectMeta) {
+		fmt.Printf("RUNNING with ReconciliationLock enabled\n")
+	} else {
+		fmt.Printf("RUNNING with ReconciliationLock disabled\n")
 	}
 
 	// Create Configmap
@@ -146,6 +157,7 @@ func (r *OpenshiftNotebookReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Create the objects required by the OAuth proxy sidecar (see
 	// notebook_oauth.go file)
 	if OAuthInjectionIsEnabled(notebook.ObjectMeta) {
+		fmt.Printf("RUNNING with OAuthInjection enabled\n")
 		// Call the OAuth Service Account reconciler
 		err = r.ReconcileOAuthServiceAccount(notebook, ctx)
 		if err != nil {
@@ -179,19 +191,26 @@ func (r *OpenshiftNotebookReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Remove the reconciliation lock annotation
 	if ReconciliationLockIsEnabled(notebook.ObjectMeta) {
+		fmt.Printf("RUNNING with ReconciliationLock enabled (%s = %s)\n",
+			culler.STOP_ANNOTATION, AnnotationValueReconciliationLock)
 		log.Info("Removing reconciliation lock")
 		err = r.RemoveReconciliationLock(notebook, ctx)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+	} else {
+		fmt.Printf("RUNNING with ReconciliationLock disabled\n")
 	}
 
+	fmt.Printf("-------\n")
+	fmt.Printf("RUNNING OpenshiftNotebookReconciler.Reconcile --> DONE\n")
+	fmt.Printf("======================================================\n\n")
 	return ctrl.Result{}, nil
 }
 
 func (r *OpenshiftNotebookReconciler) createProxyConfigMap(notebook *nbv1.Notebook,
 	ctx context.Context) error {
-
+	fmt.Printf("RUNNING createProxyConfigMap\n")
 	trustedCAConfigMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "trusted-ca",
@@ -201,10 +220,12 @@ func (r *OpenshiftNotebookReconciler) createProxyConfigMap(notebook *nbv1.Notebo
 	}
 
 	err := r.Client.Create(ctx, trustedCAConfigMap)
-	if err != nil {
-		if apierrs.IsAlreadyExists(err) {
-			return nil
-		}
+	if err == nil {
+		fmt.Printf("RUNNING createProxyConfigMap --> created\n")
+	}
+	if apierrs.IsAlreadyExists(err){
+		fmt.Printf("RUNNING createProxyConfigMap --> already exists\n")
+		return nil
 	}
 	return err
 }

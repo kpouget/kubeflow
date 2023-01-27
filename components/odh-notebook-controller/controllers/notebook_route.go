@@ -18,7 +18,7 @@ package controllers
 import (
 	"context"
 	"reflect"
-
+	"fmt"
 	nbv1 "github.com/kubeflow/kubeflow/components/notebook-controller/api/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -77,63 +77,73 @@ func (r *OpenshiftNotebookReconciler) reconcileRoute(notebook *nbv1.Notebook,
 	ctx context.Context, newRoute func(*nbv1.Notebook) *routev1.Route) error {
 	// Initialize logger format
 	log := r.Log.WithValues("notebook", notebook.Name, "namespace", notebook.Namespace)
+	fmt.Printf("RUNNING ReconcileOAuthSecret\n")
 
 	// Generate the desired route
 	desiredRoute := newRoute(notebook)
 
 	// Create the route if it does not already exist
 	foundRoute := &routev1.Route{}
-	justCreated := false
 	err := r.Get(ctx, types.NamespacedName{
 		Name:      desiredRoute.Name,
 		Namespace: notebook.Namespace,
 	}, foundRoute)
-	if err != nil {
-		if apierrs.IsNotFound(err) {
-			log.Info("Creating Route")
-			// Add .metatada.ownerReferences to the route to be deleted by the
-			// Kubernetes garbage collector if the notebook is deleted
-			err = ctrl.SetControllerReference(notebook, desiredRoute, r.Scheme)
-			if err != nil {
-				log.Error(err, "Unable to add OwnerReference to the Route")
-				return err
-			}
-			// Create the route in the Openshift cluster
-			err = r.Create(ctx, desiredRoute)
-			if err != nil && !apierrs.IsAlreadyExists(err) {
-				log.Error(err, "Unable to create the Route")
-				return err
-			}
-			justCreated = true
-		} else {
-			log.Error(err, "Unable to fetch the Route")
+
+	if err != nil && ! apierrs.IsNotFound(err) {
+		log.Error(err, "Unable to fetch the OAuth Secret")
+		return err
+	}
+
+	if err != nil && apierrs.IsNotFound(err) {
+
+		log.Info("Creating Route")
+		// Add .metatada.ownerReferences to the route to be deleted by the
+		// Kubernetes garbage collector if the notebook is deleted
+		err = ctrl.SetControllerReference(notebook, desiredRoute, r.Scheme)
+		if err != nil {
+			log.Error(err, "Unable to add OwnerReference to the Route")
 			return err
 		}
+		// Create the route in the Openshift cluster
+		err = r.Create(ctx, desiredRoute)
+		if err != nil && !apierrs.IsAlreadyExists(err) {
+			log.Error(err, "Unable to create the Route")
+			return err
+		}
+		fmt.Printf("RUNNING ReconcileOAuthSecret --> route created\n")
+
+		return nil
 	}
 
 	// Reconcile the route spec if it has been manually modified
-	if !justCreated && !CompareNotebookRoutes(*desiredRoute, *foundRoute) {
-		log.Info("Reconciling Route")
-		// Retry the update operation when the ingress controller eventually
-		// updates the resource version field
-		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			// Get the last route revision
-			if err := r.Get(ctx, types.NamespacedName{
-				Name:      desiredRoute.Name,
-				Namespace: notebook.Namespace,
-			}, foundRoute); err != nil {
-				return err
-			}
-			// Reconcile labels and spec field
-			foundRoute.Spec = desiredRoute.Spec
-			foundRoute.ObjectMeta.Labels = desiredRoute.ObjectMeta.Labels
-			return r.Update(ctx, foundRoute)
-		})
-		if err != nil {
-			log.Error(err, "Unable to reconcile the Route")
+	if CompareNotebookRoutes(*desiredRoute, *foundRoute) {
+		fmt.Printf("RUNNING ReconcileOAuthSecret --> route found, as desired\n")
+		return nil
+	}
+	fmt.Printf("RUNNING ReconcileOAuthSecret --> route found, but different\n")
+
+	log.Info("Reconciling Route")
+	// Retry the update operation when the ingress controller eventually
+	// updates the resource version field
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get the last route revision
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      desiredRoute.Name,
+			Namespace: notebook.Namespace,
+		}, foundRoute); err != nil {
 			return err
 		}
+		// Reconcile labels and spec field
+		foundRoute.Spec = desiredRoute.Spec
+		foundRoute.ObjectMeta.Labels = desiredRoute.ObjectMeta.Labels
+		return r.Update(ctx, foundRoute)
+	})
+
+	if err != nil {
+		log.Error(err, "Unable to reconcile the Route")
+		return err
 	}
+	fmt.Printf("RUNNING ReconcileOAuthSecret --> route found and updated\n")
 
 	return nil
 }

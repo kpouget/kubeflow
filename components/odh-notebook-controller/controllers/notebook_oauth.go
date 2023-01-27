@@ -20,7 +20,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"reflect"
-
+	"fmt"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	nbv1 "github.com/kubeflow/kubeflow/components/notebook-controller/api/v1"
@@ -74,6 +74,7 @@ func CompareNotebookServiceAccounts(sa1 corev1.ServiceAccount, sa2 corev1.Servic
 func (r *OpenshiftNotebookReconciler) ReconcileOAuthServiceAccount(notebook *nbv1.Notebook, ctx context.Context) error {
 	// Initialize logger format
 	log := r.Log.WithValues("notebook", notebook.Name, "namespace", notebook.Namespace)
+	fmt.Printf("RUNNING ReconcileOAuthServiceAccount\n")
 
 	// Generate the desired service account
 	desiredServiceAccount := NewNotebookServiceAccount(notebook)
@@ -84,28 +85,32 @@ func (r *OpenshiftNotebookReconciler) ReconcileOAuthServiceAccount(notebook *nbv
 		Name:      desiredServiceAccount.Name,
 		Namespace: notebook.Namespace,
 	}, foundServiceAccount)
-	if err != nil {
-		if apierrs.IsNotFound(err) {
-			log.Info("Creating Service Account")
-			// Add .metatada.ownerReferences to the service account to be deleted by
-			// the Kubernetes garbage collector if the notebook is deleted
-			err = ctrl.SetControllerReference(notebook, desiredServiceAccount, r.Scheme)
-			if err != nil {
-				log.Error(err, "Unable to add OwnerReference to the Service Account")
-				return err
-			}
-			// Create the service account in the Openshift cluster
-			err = r.Create(ctx, desiredServiceAccount)
-			if err != nil && !apierrs.IsAlreadyExists(err) {
-				log.Error(err, "Unable to create the Service Account")
-				return err
-			}
-		} else {
-			log.Error(err, "Unable to fetch the Service Account")
-			return err
-		}
+
+	if err == nil {
+		fmt.Printf("RUNNING ReconcileOAuthServiceAccount --> already exists\n")
+		return nil
 	}
 
+	if ! apierrs.IsNotFound(err) {
+		log.Error(err, "Unable to fetch the Service Account")
+		return err
+	}
+
+	log.Info("Creating Service Account")
+	// Add .metatada.ownerReferences to the service account to be deleted by
+	// the Kubernetes garbage collector if the notebook is deleted
+	err = ctrl.SetControllerReference(notebook, desiredServiceAccount, r.Scheme)
+	if err != nil {
+		log.Error(err, "Unable to add OwnerReference to the Service Account")
+		return err
+	}
+	// Create the service account in the Openshift cluster
+	err = r.Create(ctx, desiredServiceAccount)
+	if err != nil && !apierrs.IsAlreadyExists(err) {
+		log.Error(err, "Unable to create the Service Account")
+		return err
+	}
+	fmt.Printf("RUNNING ReconcileOAuthServiceAccount --> created\n")
 	return nil
 }
 
@@ -148,6 +153,7 @@ func CompareNotebookServices(s1 corev1.Service, s2 corev1.Service) bool {
 func (r *OpenshiftNotebookReconciler) ReconcileOAuthService(notebook *nbv1.Notebook, ctx context.Context) error {
 	// Initialize logger format
 	log := r.Log.WithValues("notebook", notebook.Name, "namespace", notebook.Namespace)
+	fmt.Printf("RUNNING ReconcileOAuthService\n")
 
 	// Generate the desired OAuth service
 	desiredService := NewNotebookOAuthService(notebook)
@@ -158,28 +164,33 @@ func (r *OpenshiftNotebookReconciler) ReconcileOAuthService(notebook *nbv1.Noteb
 		Name:      desiredService.GetName(),
 		Namespace: notebook.GetNamespace(),
 	}, foundService)
-	if err != nil {
-		if apierrs.IsNotFound(err) {
-			log.Info("Creating OAuth Service")
-			// Add .metatada.ownerReferences to the OAuth service to be deleted by
-			// the Kubernetes garbage collector if the notebook is deleted
-			err = ctrl.SetControllerReference(notebook, desiredService, r.Scheme)
-			if err != nil {
-				log.Error(err, "Unable to add OwnerReference to the OAuth Service")
-				return err
-			}
-			// Create the OAuth service in the Openshift cluster
-			err = r.Create(ctx, desiredService)
-			if err != nil && !apierrs.IsAlreadyExists(err) {
-				log.Error(err, "Unable to create the OAuth Service")
-				return err
-			}
-		} else {
-			log.Error(err, "Unable to fetch the OAuth Service")
-			return err
-		}
+
+	if err == nil {
+		fmt.Printf("RUNNING ReconcileOAuthService --> already exists\n")
+		return nil
 	}
 
+	if ! apierrs.IsNotFound(err) {
+		log.Error(err, "Unable to fetch the OAuth Service")
+		return err
+	}
+
+	log.Info("Creating OAuth Service")
+	// Add .metatada.ownerReferences to the OAuth service to be deleted by
+	// the Kubernetes garbage collector if the notebook is deleted
+	err = ctrl.SetControllerReference(notebook, desiredService, r.Scheme)
+	if err != nil {
+		log.Error(err, "Unable to add OwnerReference to the OAuth Service")
+		return err
+	}
+	fmt.Printf("RUNNING ReconcileOAuthService --> create\n")
+	// Create the OAuth service in the Openshift cluster
+	err = r.Create(ctx, desiredService)
+	if err != nil && !apierrs.IsAlreadyExists(err) {
+		log.Error(err, "Unable to create the OAuth Service")
+		return err
+	}
+	fmt.Printf("RUNNING ReconcileOAuthService --> created\n")
 	return nil
 }
 
@@ -211,6 +222,7 @@ func NewNotebookOAuthSecret(notebook *nbv1.Notebook) *corev1.Secret {
 func (r *OpenshiftNotebookReconciler) ReconcileOAuthSecret(notebook *nbv1.Notebook, ctx context.Context) error {
 	// Initialize logger format
 	log := r.Log.WithValues("notebook", notebook.Name, "namespace", notebook.Namespace)
+	fmt.Printf("RUNNING ReconcileOAuthSecret\n")
 
 	// Generate the desired OAuth secret
 	desiredSecret := NewNotebookOAuthSecret(notebook)
@@ -221,27 +233,32 @@ func (r *OpenshiftNotebookReconciler) ReconcileOAuthSecret(notebook *nbv1.Notebo
 		Name:      desiredSecret.Name,
 		Namespace: notebook.Namespace,
 	}, foundSecret)
-	if err != nil {
-		if apierrs.IsNotFound(err) {
-			log.Info("Creating OAuth Secret")
-			// Add .metatada.ownerReferences to the OAuth secret to be deleted by
-			// the Kubernetes garbage collector if the notebook is deleted
-			err = ctrl.SetControllerReference(notebook, desiredSecret, r.Scheme)
-			if err != nil {
-				log.Error(err, "Unable to add OwnerReference to the OAuth Secret")
-				return err
-			}
-			// Create the OAuth secret in the Openshift cluster
-			err = r.Create(ctx, desiredSecret)
-			if err != nil && !apierrs.IsAlreadyExists(err) {
-				log.Error(err, "Unable to create the OAuth Secret")
-				return err
-			}
-		} else {
-			log.Error(err, "Unable to fetch the OAuth Secret")
-			return err
-		}
+
+	if err == nil {
+		fmt.Printf("RUNNING ReconcileOAuthSecret --> already exists\n")
+		return nil
 	}
+
+	if ! apierrs.IsNotFound(err) {
+		log.Error(err, "Unable to fetch the OAuth Secret")
+		return err
+	}
+
+	log.Info("Creating OAuth Secret")
+	// Add .metatada.ownerReferences to the OAuth secret to be deleted by
+	// the Kubernetes garbage collector if the notebook is deleted
+	err = ctrl.SetControllerReference(notebook, desiredSecret, r.Scheme)
+	if err != nil {
+		log.Error(err, "Unable to add OwnerReference to the OAuth Secret")
+		return err
+	}
+	// Create the OAuth secret in the Openshift cluster
+	err = r.Create(ctx, desiredSecret)
+	if err != nil && !apierrs.IsAlreadyExists(err) {
+		log.Error(err, "Unable to create the OAuth Secret")
+		return err
+	}
+	fmt.Printf("RUNNING ReconcileOAuthSecret --> created\n")
 
 	return nil
 }
