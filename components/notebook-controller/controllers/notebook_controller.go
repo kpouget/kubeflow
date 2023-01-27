@@ -88,11 +88,22 @@ type NotebookReconciler struct {
 func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.WithValues("notebook", req.NamespacedName)
 
+	fmt.Printf("\n======================================================\n")
+	fmt.Printf("RUNNING NotebookReconciler.Reconcile %s|%s || %o\n", req.Name, req.Namespace)
+	fmt.Printf("-------\n")
+
 	// TODO(yanniszark): Can we avoid reconciling Events and Notebook in the same queue?
 	event := &corev1.Event{}
 	var getEventErr error
 	getEventErr = r.Get(ctx, req.NamespacedName, event)
+
+	if getEventErr != nil && !apierrs.IsNotFound(getEventErr) {
+		return ctrl.Result{}, getEventErr
+	}
+
 	if getEventErr == nil {
+		fmt.Printf("RUNNING with an event %s|%s\n", req.Name, req.Namespace)
+
 		log.Info("Found event for Notebook. Re-emitting...")
 
 		// Find the Notebook that corresponds to the triggered event
@@ -103,6 +114,8 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 
 		involvedNotebookKey := types.NamespacedName{Name: nbName, Namespace: req.Namespace}
+		fmt.Printf("RUNNING with an event from %s|%s\n", nbName, req.Namespace)
+
 		if err := r.Get(ctx, involvedNotebookKey, involvedNotebook); err != nil {
 			log.Error(err, "unable to fetch Notebook by looking at event")
 			return ctrl.Result{}, ignoreNotFound(err)
@@ -115,11 +128,8 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	if getEventErr != nil && !apierrs.IsNotFound(getEventErr) {
-		return ctrl.Result{}, getEventErr
-	}
-	// If not found, continue. Is not an event.
-
+	// Is not an event.
+	fmt.Printf("RUNNING with a notebook %s|%s\n")
 	instance := &v1beta1.Notebook{}
 	if err := r.Get(ctx, req.NamespacedName, instance); err != nil {
 		log.Error(err, "unable to fetch Notebook")
@@ -127,48 +137,60 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// Reconcile StatefulSet
+	fmt.Printf("RUNNING generateStatefulSet\n")
 	ss := generateStatefulSet(instance)
+
 	if err := ctrl.SetControllerReference(instance, ss, r.Scheme); err != nil {
 		return ctrl.Result{}, err
 	}
 	// Check if the StatefulSet already exists
 	foundStateful := &appsv1.StatefulSet{}
 	justCreated := false
+
 	err := r.Get(ctx, types.NamespacedName{Name: ss.Name, Namespace: ss.Namespace}, foundStateful)
 	if err != nil && apierrs.IsNotFound(err) {
+		fmt.Printf("RUNNING generateStatefulSet --> create\n")
 		log.Info("Creating StatefulSet", "namespace", ss.Namespace, "name", ss.Name)
 		r.Metrics.NotebookCreation.WithLabelValues(ss.Namespace).Inc()
 		err = r.Create(ctx, ss)
-		justCreated = true
 		if err != nil {
 			log.Error(err, "unable to create Statefulset")
 			r.Metrics.NotebookFailCreation.WithLabelValues(ss.Namespace).Inc()
 			return ctrl.Result{}, err
 		}
+		justCreated = true
+
 	} else if err != nil {
 		log.Error(err, "error getting Statefulset")
 		return ctrl.Result{}, err
 	}
+
 	// Update the foundStateful object and write the result back if there are any changes
 	if !justCreated && reconcilehelper.CopyStatefulSetFields(ss, foundStateful) {
+		fmt.Printf("RUNNING generateStatefulSet --> update\n")
 		log.Info("Updating StatefulSet", "namespace", ss.Namespace, "name", ss.Name)
 		err = r.Update(ctx, foundStateful)
 		if err != nil {
 			log.Error(err, "unable to update Statefulset")
 			return ctrl.Result{}, err
 		}
+	} else if !justCreated {
+		fmt.Printf("RUNNING generateStatefulSet --> no need to update\n")
 	}
 
 	// Reconcile service
+	fmt.Printf("RUNNING generateService\n")
 	service := generateService(instance)
 	if err := ctrl.SetControllerReference(instance, service, r.Scheme); err != nil {
 		return ctrl.Result{}, err
 	}
+
 	// Check if the Service already exists
 	foundService := &corev1.Service{}
 	justCreated = false
 	err = r.Get(ctx, types.NamespacedName{Name: service.Name, Namespace: service.Namespace}, foundService)
 	if err != nil && apierrs.IsNotFound(err) {
+		fmt.Printf("RUNNING generateService --> create\n")
 		log.Info("Creating Service", "namespace", service.Namespace, "name", service.Name)
 		err = r.Create(ctx, service)
 		justCreated = true
@@ -180,14 +202,18 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		log.Error(err, "error getting Statefulset")
 		return ctrl.Result{}, err
 	}
+
 	// Update the foundService object and write the result back if there are any changes
 	if !justCreated && reconcilehelper.CopyServiceFields(service, foundService) {
+		fmt.Printf("RUNNING generateService --> update\n")
 		log.Info("Updating Service\n", "namespace", service.Namespace, "name", service.Name)
 		err = r.Update(ctx, foundService)
 		if err != nil {
 			log.Error(err, "unable to update Service")
 			return ctrl.Result{}, err
 		}
+	} else if !justCreated {
+		fmt.Printf("RUNNING generateService --> no need to update\n")
 	}
 
 	// Reconcile virtual service if we use ISTIO.
@@ -200,6 +226,8 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Update the readyReplicas if the status is changed
 	if foundStateful.Status.ReadyReplicas != instance.Status.ReadyReplicas {
+		fmt.Printf("RUNNING --> updateStatus.ReadyReplicas \n")
+
 		log.Info("Updating Status", "namespace", instance.Namespace, "name", instance.Name)
 		instance.Status.ReadyReplicas = foundStateful.Status.ReadyReplicas
 		err = r.Status().Update(ctx, instance)
@@ -211,13 +239,18 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Check the pod status
 	pod := &corev1.Pod{}
 	podFound := false
+	fmt.Printf("RUNNING get pod %s-0|%s \n", ss.Name, ss.Namespace)
 	err = r.Get(ctx, types.NamespacedName{Name: ss.Name + "-0", Namespace: ss.Namespace}, pod)
 	if err != nil && apierrs.IsNotFound(err) {
 		// This should be reconciled by the StatefulSet
+		fmt.Printf("RUNNING get pod %s-0|%s --> not found\n", ss.Name, ss.Namespace)
 		log.Info("Pod not found...")
 	} else if err != nil {
 		return ctrl.Result{}, err
+
 	} else {
+		fmt.Printf("RUNNING get pod %s-0|%s --> found with %d container status\n",
+			ss.Name, ss.Namespace, len(pod.Status.ContainerStatuses))
 		// Got the pod
 		podFound = true
 
@@ -246,6 +279,8 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 					log.Info("Appending to conditions: ", "namespace", instance.Namespace, "name", instance.Name, "type", newCondition.Type, "reason", newCondition.Reason, "message", newCondition.Message)
 					instance.Status.Conditions = append([]v1beta1.NotebookCondition{newCondition}, oldConditions...)
 				}
+
+				fmt.Printf("RUNNING get pod %s-0|%s --> Status.UPDATE\n", ss.Name, ss.Namespace)
 				err = r.Status().Update(ctx, instance)
 				if err != nil {
 					return ctrl.Result{}, err
@@ -263,7 +298,9 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !podFound {
 		// Delete LAST_ACTIVITY_ANNOTATION annotations for CR objects
 		// that do not have a pod.
-		log.Info("Notebook has not Pod running. Will remove last-activity annotation")
+		fmt.Printf("RUNNING get pod %s-0|%s --> not found\n", ss.Name, ss.Namespace)
+
+		log.Info("Notebook has no Pod running. Will remove last-activity annotation")
 		meta := instance.ObjectMeta
 		if meta.GetAnnotations() == nil {
 			log.Info("No annotations found")
@@ -277,10 +314,12 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 		log.Info("Removing last-activity annotation")
 		delete(meta.GetAnnotations(), culler.LAST_ACTIVITY_ANNOTATION)
+		fmt.Printf("RUNNING get pod %s-0|%s --> not found --> UPDATE\n", ss.Name, ss.Namespace)
 		err = r.Update(ctx, instance)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+
 		return ctrl.Result{}, nil
 
 	}
@@ -289,6 +328,7 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Check if the Notebook needs to be stopped
 	// Update the LAST_ACTIVITY_ANNOTATION
 	if culler.UpdateNotebookLastActivityAnnotation(&instance.ObjectMeta) {
+		fmt.Printf("RUNNING UpdateNotebookLastActivityAnnotation --> UPDATE\n", ss.Name, ss.Namespace)
 		err = r.Update(ctx, instance)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -297,6 +337,7 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Check if the Notebook needs to be stopped
 	if culler.NotebookNeedsCulling(instance.ObjectMeta) {
+		fmt.Printf("RUNNING NotebookNeedsCulling --> UPDATE\n", ss.Name, ss.Namespace)
 		log.Info(fmt.Sprintf(
 			"Notebook %s/%s needs culling. Setting annotations",
 			instance.Namespace, instance.Name))
@@ -314,6 +355,7 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// it needs culling.
 		return ctrl.Result{RequeueAfter: culler.GetRequeueTime()}, nil
 	}
+
 	return ctrl.Result{RequeueAfter: culler.GetRequeueTime()}, nil
 }
 
@@ -360,10 +402,13 @@ func setPrefixEnvVar(instance *v1beta1.Notebook, container *corev1.Container) {
 }
 
 func generateStatefulSet(instance *v1beta1.Notebook) *appsv1.StatefulSet {
+
 	replicas := int32(1)
 	if culler.StopAnnotationIsSet(instance.ObjectMeta) {
 		replicas = 0
 	}
+
+	fmt.Printf("RUNNING generateStatefulSet: setting replicas=%d\n", replicas)
 
 	ss := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
