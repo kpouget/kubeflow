@@ -225,7 +225,7 @@ func UpdateNotebookLastActivityAnnotation(meta *metav1.ObjectMeta) bool {
 		meta.Annotations[LAST_ACTIVITY_ANNOTATION] = t
 		return true
 	}
-
+	return true
 	log.Info("last-activity annotation exists. Checking /api/kernels")
 	kernels := getNotebookApiKernels(nm, ns)
 	if kernels == nil {

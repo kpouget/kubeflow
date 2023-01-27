@@ -89,7 +89,7 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	log := r.Log.WithValues("notebook", req.NamespacedName)
 
 	fmt.Printf("\n======================================================\n")
-	fmt.Printf("RUNNING NotebookReconciler.Reconcile %s|%s || %o\n", req.Name, req.Namespace)
+	fmt.Printf("RUNNING NotebookReconciler.Reconcile %s|%s\n", req.Name, req.Namespace)
 	fmt.Printf("-------\n")
 
 	// TODO(yanniszark): Can we avoid reconciling Events and Notebook in the same queue?
@@ -102,9 +102,9 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	if getEventErr == nil {
-		fmt.Printf("RUNNING with an event %s|%s\n", req.Name, req.Namespace)
+		fmt.Printf("RUNNING with an event %s|%s --> %s\n", req.Name, req.Namespace, event.Message)
 
-		log.Info("Found event for Notebook. Re-emitting...")
+		//log.Info("Found event for Notebook. Re-emitting...")
 
 		// Find the Notebook that corresponds to the triggered event
 		involvedNotebook := &v1beta1.Notebook{}
@@ -122,14 +122,14 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 
 		// re-emit the event in the Notebook CR
-		log.Info("Emitting Notebook Event.", "Event", event)
+		//log.Info("Emitting Notebook Event.", "Event", event)
 		r.EventRecorder.Eventf(involvedNotebook, event.Type, event.Reason,
 			"Reissued from %s/%s: %s", strings.ToLower(event.InvolvedObject.Kind), event.InvolvedObject.Name, event.Message)
 		return ctrl.Result{}, nil
 	}
 
 	// Is not an event.
-	fmt.Printf("RUNNING with a notebook %s|%s\n")
+	fmt.Printf("RUNNING with a notebook %s|%s\n", req.Name, req.Namespace)
 	instance := &v1beta1.Notebook{}
 	if err := r.Get(ctx, req.NamespacedName, instance); err != nil {
 		log.Error(err, "unable to fetch Notebook")
@@ -298,7 +298,7 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !podFound {
 		// Delete LAST_ACTIVITY_ANNOTATION annotations for CR objects
 		// that do not have a pod.
-		fmt.Printf("RUNNING get pod %s-0|%s --> not found\n", ss.Name, ss.Namespace)
+		fmt.Printf("RUNNING get pod %s-0|%s --> not found, delete LAST_ACTIVITY_ANNOTATION annotations\n", ss.Name, ss.Namespace)
 
 		log.Info("Notebook has no Pod running. Will remove last-activity annotation")
 		meta := instance.ObjectMeta
@@ -309,12 +309,13 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 		if _, ok := meta.GetAnnotations()[culler.LAST_ACTIVITY_ANNOTATION]; !ok {
 			log.Info("No last-activity annotations found")
+			fmt.Printf("RUNNING get pod %s-0|%s --> not found, LAST_ACTIVITY_ANNOTATION annotation not set --> bye\n", ss.Name, ss.Namespace)
 			return ctrl.Result{}, nil
 		}
 
 		log.Info("Removing last-activity annotation")
 		delete(meta.GetAnnotations(), culler.LAST_ACTIVITY_ANNOTATION)
-		fmt.Printf("RUNNING get pod %s-0|%s --> not found --> UPDATE\n", ss.Name, ss.Namespace)
+		fmt.Printf("RUNNING get pod %s-0|%s --> not found, delete LAST_ACTIVITY_ANNOTATION annotations --> UPDATE\n", ss.Name, ss.Namespace)
 		err = r.Update(ctx, instance)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -327,8 +328,9 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Pod is found
 	// Check if the Notebook needs to be stopped
 	// Update the LAST_ACTIVITY_ANNOTATION
+	fmt.Printf("RUNNING UpdateNotebookLastActivityAnnotation?\n")
 	if culler.UpdateNotebookLastActivityAnnotation(&instance.ObjectMeta) {
-		fmt.Printf("RUNNING UpdateNotebookLastActivityAnnotation --> UPDATE\n", ss.Name, ss.Namespace)
+		fmt.Printf("RUNNING UpdateNotebookLastActivityAnnotation --> UPDATE\n")
 		err = r.Update(ctx, instance)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -337,7 +339,7 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Check if the Notebook needs to be stopped
 	if culler.NotebookNeedsCulling(instance.ObjectMeta) {
-		fmt.Printf("RUNNING NotebookNeedsCulling --> UPDATE\n", ss.Name, ss.Namespace)
+
 		log.Info(fmt.Sprintf(
 			"Notebook %s/%s needs culling. Setting annotations",
 			instance.Namespace, instance.Name))
@@ -345,6 +347,7 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// Set annotations to the Notebook
 		culler.SetStopAnnotation(&instance.ObjectMeta, r.Metrics)
 		r.Metrics.NotebookCullingCount.WithLabelValues(instance.Namespace, instance.Name).Inc()
+		fmt.Printf("RUNNING NotebookNeedsCulling --> UPDATE\n", ss.Name, ss.Namespace)
 		err = r.Update(ctx, instance)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -353,9 +356,10 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// The Pod is either too fresh, or the idle time has passed and it has
 		// received traffic. In this case we will be periodically checking if
 		// it needs culling.
+		fmt.Printf("RUNNING reconciliation --> !StopAnnotationIsSet. Requeue after %s\n", culler.GetRequeueTime())
 		return ctrl.Result{RequeueAfter: culler.GetRequeueTime()}, nil
 	}
-
+	fmt.Printf("RUNNING reconciliation --> DONE. Requeue after %s\n", culler.GetRequeueTime())
 	return ctrl.Result{RequeueAfter: culler.GetRequeueTime()}, nil
 }
 
@@ -408,7 +412,7 @@ func generateStatefulSet(instance *v1beta1.Notebook) *appsv1.StatefulSet {
 		replicas = 0
 	}
 
-	fmt.Printf("RUNNING generateStatefulSet: setting replicas=%d\n", replicas)
+	fmt.Printf("RUNNING generateStatefulSet --> setting replicas=%d\n", replicas)
 
 	ss := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{

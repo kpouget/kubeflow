@@ -128,7 +128,7 @@ func (r *OpenshiftNotebookReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Initialize logger format
 	log := r.Log.WithValues("notebook", req.Name, "namespace", req.Namespace)
 	fmt.Printf("\n======================================================\n")
-	fmt.Printf("RUNNING OpenshiftNotebookReconciler.Reconcile %s|%s || %o\n", req.Name, req.Namespace)
+	fmt.Printf("RUNNING OpenshiftNotebookReconciler.Reconcile %s|%s\n", req.Name, req.Namespace)
 	fmt.Printf("-------\n")
 	// Get the notebook object when a reconciliation event is triggered (create,
 	// update, delete)
